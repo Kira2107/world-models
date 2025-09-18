@@ -2,6 +2,7 @@
 import argparse
 from os.path import join, exists
 from os import mkdir
+from os import makedirs
 
 import torch
 import torch.utils.data
@@ -124,7 +125,7 @@ def test():
 # check vae dir exists, if not, create it
 vae_dir = join(args.logdir, 'vae')
 if not exists(vae_dir):
-    mkdir(vae_dir)
+    makedirs(vae_dir, exist_ok=True)
     mkdir(join(vae_dir, 'samples'))
 
 reload_file = join(vae_dir, 'best.tar')
