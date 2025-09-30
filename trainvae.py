@@ -1,8 +1,8 @@
 """ Training VAE """
 import argparse
 from os.path import join, exists
-from os import mkdir
-from os import makedirs
+from os import mkdir, makedirs
+
 
 import torch
 import torch.utils.data
@@ -33,14 +33,14 @@ parser.add_argument('--nosamples', action='store_true',
 
 
 args = parser.parse_args()
-cuda = torch.cuda.is_available()
+cuda = False
 
 
 torch.manual_seed(123)
 # Fix numeric divergence due to bug in Cudnn
 torch.backends.cudnn.benchmark = True
 
-device = torch.device("cuda" if cuda else "cpu")
+device = torch.device("cpu")
 
 
 transform_train = transforms.Compose([
@@ -66,7 +66,8 @@ test_loader = torch.utils.data.DataLoader(
     dataset_test, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
 
-model = VAE(3, LSIZE).to(device)
+# Force model to CPU
+model = VAE(3, LSIZE).to("cpu")
 optimizer = optim.Adam(model.parameters())
 scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
 earlystopping = EarlyStopping('min', patience=30)
@@ -74,7 +75,8 @@ earlystopping = EarlyStopping('min', patience=30)
 # Reconstruction + KL divergence losses summed over all elements and batch
 def loss_function(recon_x, x, mu, logsigma):
     """ VAE loss function """
-    BCE = F.mse_loss(recon_x, x, size_average=False)
+    BCE = F.mse_loss(recon_x, x, reduction='sum')
+    ##############BCE = F.mse_loss(recon_x, x, size_average=False)
 
     # see Appendix B from VAE paper:
     # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
