@@ -1,11 +1,12 @@
 name: world_models_env_backup
 channels:
   - defaults
+  - conda-forge
 dependencies:
   - _libgcc_mutex=0.1=main
   - ca-certificates=2025.9.9=h06a4308_0
   - ld_impl_linux-64=2.40=h12ee557_0
-  - libstdcxx-ng=13.2.0=hc0a3c3a_7
+  - libstdcxx-ng=13.2.0
   - libgomp=11.2.0=h1234567_1
   - _openmp_mutex=5.1=1_gnu
   - libgcc-ng=11.2.0=h1234567_1
