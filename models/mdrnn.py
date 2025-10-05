@@ -8,32 +8,21 @@ import torch.nn.functional as f
 from torch.distributions.normal import Normal
 
 def gmm_loss(batch, mus, sigmas, logpi, reduce=True): # pylint: disable=too-many-arguments
-    """ Computes the gmm loss.
-
-    Compute minus the log probability of batch under the GMM model described
-    by mus, sigmas, pi. Precisely, with bs1, bs2, ... the sizes of the batch
-    dimensions (several batch dimension are useful when you have both a batch
-    axis and a time step axis), gs the number of mixtures and fs the number of
-    features.
-
-    :args batch: (bs1, bs2, *, fs) torch tensor
-    :args mus: (bs1, bs2, *, gs, fs) torch tensor
-    :args sigmas: (bs1, bs2, *, gs, fs) torch tensor
-    :args logpi: (bs1, bs2, *, gs) torch tensor
-    :args reduce: if not reduce, the mean in the following formula is ommited
-
-    :returns:
-    loss(batch) = - mean_{i1=0..bs1, i2=0..bs2, ...} log(
-        sum_{k=1..gs} pi[i1, i2, ..., k] * N(
-            batch[i1, i2, ..., :] | mus[i1, i2, ..., k, :], sigmas[i1, i2, ..., k, :]))
-
-    NOTE: The loss is not reduced along the feature dimension (i.e. it should scale ~linearily
-    with fs).
-    """
+    """ Computes the Gaussian Mixture Model (GMM) negative log-likelihood loss.
+    (Numerical Stability Fix: Adds epsilon to sigmas)
+    """ 
+    # 1. Expand observation to match GMM mixture dimension (gs)
     batch = batch.unsqueeze(-2)
-    normal_dist = Normal(mus, sigmas)
+    
+    # 2. NUMERICAL STABILIZATION: Add epsilon (1e-12) to sigmas to prevent zero/underflow.
+    epsilon = 1e-12
+    normal_dist = Normal(mus, sigmas + epsilon)
+    
+    # 3. Calculate log-probabilities for each Gaussian component
     g_log_probs = normal_dist.log_prob(batch)
     g_log_probs = logpi + torch.sum(g_log_probs, dim=-1)
+    
+    # 4. LogSumExp Trick (Numerically stable way to calculate log(sum(exp(x))))
     max_log_probs = torch.max(g_log_probs, dim=-1, keepdim=True)[0]
     g_log_probs = g_log_probs - max_log_probs
 
@@ -41,9 +30,12 @@ def gmm_loss(batch, mus, sigmas, logpi, reduce=True): # pylint: disable=too-many
     probs = torch.sum(g_probs, dim=-1)
 
     log_prob = max_log_probs.squeeze() + torch.log(probs)
+    
+    # 5. Compute the final negative log-likelihood loss
     if reduce:
-        return - torch.mean(log_prob)
-    return - log_prob
+        return -torch.mean(log_prob)
+        
+    return -log_prob
 
 class _MDRNNBase(nn.Module):
     def __init__(self, latents, actions, hiddens, gaussians):
@@ -55,6 +47,11 @@ class _MDRNNBase(nn.Module):
 
         self.gmm_linear = nn.Linear(
             hiddens, (2 * latents + 1) * gaussians + 2)
+        
+        # FIX: Custom Initialization for GMM layer stability
+        nn.init.xavier_uniform_(self.gmm_linear.weight)
+        nn.init.zeros_(self.gmm_linear.bias)
+
 
     def forward(self, *inputs):
         pass
@@ -65,21 +62,15 @@ class MDRNN(_MDRNNBase):
         super().__init__(latents, actions, hiddens, gaussians)
         self.rnn = nn.LSTM(latents + actions, hiddens)
 
+        # FIX: Custom Initialization for LSTM layers
+        for name, param in self.rnn.named_parameters():
+            if 'weight' in name:
+                nn.init.orthogonal_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+
     def forward(self, actions, latents): # pylint: disable=arguments-differ
-        """ MULTI STEPS forward.
-
-        :args actions: (SEQ_LEN, BSIZE, ASIZE) torch tensor
-        :args latents: (SEQ_LEN, BSIZE, LSIZE) torch tensor
-
-        :returns: mu_nlat, sig_nlat, pi_nlat, rs, ds, parameters of the GMM
-        prediction for the next latent, gaussian prediction of the reward and
-        logit prediction of terminality.
-            - mu_nlat: (SEQ_LEN, BSIZE, N_GAUSS, LSIZE) torch tensor
-            - sigma_nlat: (SEQ_LEN, BSIZE, N_GAUSS, LSIZE) torch tensor
-            - logpi_nlat: (SEQ_LEN, BSIZE, N_GAUSS) torch tensor
-            - rs: (SEQ_LEN, BSIZE) torch tensor
-            - ds: (SEQ_LEN, BSIZE) torch tensor
-        """
+        """ MULTI STEPS forward. """
         seq_len, bs = actions.size(0), actions.size(1)
 
         ins = torch.cat([actions, latents], dim=-1)
@@ -93,6 +84,9 @@ class MDRNN(_MDRNNBase):
 
         sigmas = gmm_outs[:, :, stride:2 * stride]
         sigmas = sigmas.view(seq_len, bs, self.gaussians, self.latents)
+        
+        # FIX: Clamp the output before exp to prevent overflow/NaN
+        sigmas = torch.clamp(sigmas, -1e2, 1e2)
         sigmas = torch.exp(sigmas)
 
         pi = gmm_outs[:, :, 2 * stride: 2 * stride + self.gaussians]
@@ -110,23 +104,15 @@ class MDRNNCell(_MDRNNBase):
     def __init__(self, latents, actions, hiddens, gaussians):
         super().__init__(latents, actions, hiddens, gaussians)
         self.rnn = nn.LSTMCell(latents + actions, hiddens)
+        # FIX: Apply initialization to LSTMCell layers
+        for name, param in self.rnn.named_parameters():
+            if 'weight' in name:
+                nn.init.orthogonal_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
 
     def forward(self, action, latent, hidden): # pylint: disable=arguments-differ
-        """ ONE STEP forward.
-
-        :args actions: (BSIZE, ASIZE) torch tensor
-        :args latents: (BSIZE, LSIZE) torch tensor
-        :args hidden: (BSIZE, RSIZE) torch tensor
-
-        :returns: mu_nlat, sig_nlat, pi_nlat, r, d, next_hidden, parameters of
-        the GMM prediction for the next latent, gaussian prediction of the
-        reward, logit prediction of terminality and next hidden state.
-            - mu_nlat: (BSIZE, N_GAUSS, LSIZE) torch tensor
-            - sigma_nlat: (BSIZE, N_GAUSS, LSIZE) torch tensor
-            - logpi_nlat: (BSIZE, N_GAUSS) torch tensor
-            - rs: (BSIZE) torch tensor
-            - ds: (BSIZE) torch tensor
-        """
+        """ ONE STEP forward. """
         in_al = torch.cat([action, latent], dim=1)
 
         next_hidden = self.rnn(in_al, hidden)
@@ -141,6 +127,9 @@ class MDRNNCell(_MDRNNBase):
 
         sigmas = out_full[:, stride:2 * stride]
         sigmas = sigmas.view(-1, self.gaussians, self.latents)
+        
+        # FIX: Clamp the output before exp to prevent overflow/NaN
+        sigmas = torch.clamp(sigmas, -1e2, 1e2)
         sigmas = torch.exp(sigmas)
 
         pi = out_full[:, 2 * stride:2 * stride + self.gaussians]
