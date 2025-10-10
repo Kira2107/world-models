@@ -41,7 +41,7 @@ assert exists(vae_file), "No trained VAE in the logdir..."
 state = torch.load(vae_file)
 print("Loading VAE at epoch {} "
       "with test error {}".format(
-          state['epoch'], state['precision']))
+          state['epoch'], state['precision']))  
 
 vae = VAE(3, LSIZE).to(device)
 vae.load_state_dict(state['state_dict'])
@@ -93,7 +93,7 @@ def to_latent(obs, next_obs):
     """
     with torch.no_grad():
         obs, next_obs = [
-            f.upsample(x.view(-1, 3, SIZE, SIZE), size=RED_SIZE,
+            f.interpolate(x.view(-1, 3, SIZE, SIZE), size=RED_SIZE,
                        mode='bilinear', align_corners=True)
             for x in (obs, next_obs)]
 
