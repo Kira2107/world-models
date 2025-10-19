@@ -98,9 +98,10 @@ def to_latent(obs, next_obs):
         print(f"--- 1. Initial Tensor (obs) ---")
         print(f"Shape: {obs.shape}")
         print(f"Total Elements: {obs.numel()}")
-        # Printing values for a huge tensor (36,864 elements) is impractical, 
-        # but here's a small slice:
-        print(f"Value Slice (First 5x5 of first frame): \n{obs[0, 0, 0, :5, :5]}\n")
+
+        print(f"--- 1. Initial Tensor (next_obs) ---")
+        print(f"Shape: {next_obs.shape}")
+        print(f"Total Elements: {next_obs.numel()}")
 
         obs_next_obs_list = []
         for index, x in enumerate((obs, next_obs)):
