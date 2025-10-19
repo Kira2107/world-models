@@ -92,6 +92,46 @@ def to_latent(obs, next_obs):
         - next_latent_obs: 4D torch tensor (BSIZE, SEQ_LEN, LSIZE)
     """
     with torch.no_grad():
+        # --- 1. VALUE OF INITIAL TENSOR (x) ---
+        # The input 'obs' (which becomes 'x' in the list comprehension)
+        # The true shape is [BSIZE, SEQ_LEN, 3, SIZE, SIZE] 
+        print(f"--- 1. Initial Tensor (obs) ---")
+        print(f"Shape: {obs.shape}")
+        print(f"Total Elements: {obs.numel()}")
+        # Printing values for a huge tensor (36,864 elements) is impractical, 
+        # but here's a small slice:
+        print(f"Value Slice (First 5x5 of first frame): \n{obs[0, 0, 0, :5, :5]}\n")
+
+        obs_next_obs_list = []
+        for index, x in enumerate((obs, next_obs)):
+            
+            # --- 2. VALUE OF x.view(-1, 3, SIZE, SIZE) ---
+            # Flattens (BSIZE * SEQ_LEN) into one dimension.
+            # Total elements are preserved: 16 * 32 * 3 * 64 * 64 = 6,291,456
+            x_view_unprocessed = x.view(-1, 3, SIZE, SIZE)
+            print(f"--- 2. Reshaped Tensor (x.view(-1, 3, SIZE, SIZE)) ---")
+            print(f"Shape: {x_view_unprocessed.shape}")
+            print(f"Total Elements: {x_view_unprocessed.numel()}")
+            
+            # --- 3. VALUE OF f.interpolate(...) ---
+            # Resizes the image (SIZE x SIZE) to RED_SIZE x RED_SIZE.
+            # Since SIZE=RED_SIZE=64, this performs no effective change, 
+            # but is necessary to cast the tensor for the VAE forward pass.
+            interpolated_x = f.interpolate(
+                x_view_unprocessed, 
+                size=RED_SIZE,
+                mode='bilinear', 
+                align_corners=True
+            )
+            print(f"--- 3. Interpolated Tensor (f.interpolate(...)) ---")
+            print(f"Shape: {interpolated_x.shape}")
+            print(f"Total Elements: {interpolated_x.numel()}")
+            # Printing values for a huge tensor is still impractical here.
+            # These values are the normalized image data (0.0 to 1.0).
+
+            obs_next_obs_list.append(interpolated_x)
+        
+        obs_resized, next_obs_resized = obs_next_obs_list
         obs, next_obs = [
             f.interpolate(x.view(-1, 3, SIZE, SIZE), size=RED_SIZE,
                        mode='bilinear', align_corners=True)
@@ -99,6 +139,19 @@ def to_latent(obs, next_obs):
 
         (obs_mu, obs_logsigma), (next_obs_mu, next_obs_logsigma) = [
             vae(x)[1:] for x in (obs, next_obs)]
+
+        # 4. Reparameterization Trick and DEBUGGING OUTPUT
+        
+        # Calculate the sampled latent state (z)
+        sampled_latent = (obs_mu + obs_logsigma.exp() * torch.randn_like(obs_mu))
+
+        # --- DEBUG PRINT STATEMENTS ---
+        print("\n--- DEBUG: TENSOR BEFORE RESHAPE ---")
+        print(f"Shape of Sampled Latent Tensor: {sampled_latent.shape}")
+        print(f"Total Elements in Tensor: {sampled_latent.numel()}")
+        print(f"Requested Final Reshape: {[BSIZE, SEQ_LEN, LSIZE]}")
+        print("--------------------------------------\n")
+        # ------------------------------
 
         latent_obs, latent_next_obs = [
             (x_mu + x_logsigma.exp() * torch.randn_like(x_mu)).view(BSIZE, SEQ_LEN, LSIZE)
