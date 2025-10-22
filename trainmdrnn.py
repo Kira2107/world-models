@@ -127,8 +127,6 @@ def to_latent(obs, next_obs):
             print(f"--- 3. Interpolated Tensor (f.interpolate(...)) ---")
             print(f"Shape: {interpolated_x.shape}")
             print(f"Total Elements: {interpolated_x.numel()}")
-            # Printing values for a huge tensor is still impractical here.
-            # These values are the normalized image data (0.0 to 1.0).
 
             obs_next_obs_list.append(interpolated_x)
         
